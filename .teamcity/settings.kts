@@ -50,6 +50,12 @@ object Fork : GitVcsRoot({
     url = "https://github.com/arokhin/configuration-as-code-plugin.git"
     branch = "refs/heads/master"
     branchSpec = "+:refs/heads/master"
+    // Full history on the agent. The default AUTO checkout policy turns on shallow clone (--depth=1) on short-lived
+    // cloud agents ("Shallow clone automatically enabled on a short-lived agent", builds 29086/29198/29201). With
+    // depth 1, git-changelist-maven-extension computed the version as 1.v8a_8d38668c72 instead of 2147.v<hash>
+    // (2147 = commit count of 8a8d386), so the incrementals artifacts carried the wrong version. NO_MIRRORS keeps a plain,
+    // non-shallow clone in the checkout dir. This is a small repo, so the extra fetch costs seconds.
+    checkoutPolicy = AgentCheckoutPolicy.NO_MIRRORS
     if (Ctx.githubTokenId.isNotBlank()) {
         authMethod = token {
             userName = "oauth2"
@@ -180,6 +186,9 @@ object BuildLinuxJdk25 : BuildType({
             scriptContent = """
                 set -eu
                 CL=${'$'}(cat changelist.txt)
+                # Guard: a changelist starting with "1." means the checkout was shallow (see the Fork VCS root), and
+                # incrementals would be published under a wrong version.
+                case "${'$'}CL" in 1.v*) echo "changelist ${'$'}CL: shallow checkout, commit count lost" >&2; exit 1;; esac
                 rm -rf incrementals && mkdir -p incrementals
                 cd "%tcmf.m2repo%"
                 find . -type f -path "*${'$'}CL/*${'$'}CL*" -exec cp --parents {} "%teamcity.build.checkoutDir%/incrementals/" \;
